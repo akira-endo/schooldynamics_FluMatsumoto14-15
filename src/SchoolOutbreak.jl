@@ -6,20 +6,6 @@ updateArray!(x::A,y) where A<:AbstractArray =begin x.=y end
 updateArray!(x::A,y) where A<:AbstractArray{<:AbstractArray} =begin updateArray!.(x,y) end
 interval(x,lo=-Inf,up=Inf)=min(max(x,lo),up)
 
-function qfindall(f, a::Array{T, N}) where {T, N}
-    j = 1
-    b = Vector{Int}(undef, length(a))
-    @inbounds for i in eachindex(a)
-        @inbounds if f(a[i])
-            b[j] = i
-            j += 1
-        end
-    end
-    resize!(b, j-1)
-    sizehint!(b, length(b))
-    return b
-end
-
 function getstdistance(from,to)
     Int.(to.stratum.==from.stratum) |> cumprod |> sum |> x->x+one(x) # look for the match level betweeen stX and stY
 end
@@ -272,7 +258,7 @@ function pairtransmit!(pair, parameters, data)
 end
 function transmission!(students::Students, onset::Integer, statuscheck!)
     statuscheck!(students,onset)
-    infectorids=qfindall(x->getfield(x,:onset) == onset ,students.members)
+    infectorids=findall(x->getfield(x,:onset) == onset ,students.members)
     @views pairtransmit!.(students.pairs[infectorids,:], Ref(students.parameters), Ref(students.data))
     return(infectorids)
 end
