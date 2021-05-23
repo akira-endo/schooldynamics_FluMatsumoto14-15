@@ -1,6 +1,7 @@
 module SchoolOutbreak
 using Distributions, LinearAlgebra, StatsFuns
 Base.isless(n::Nothing,f)=false;Base.isless(f, n::Nothing)=true;Base.isless(n1::Nothing, n2::Nothing)=false
+
 # utils
 updateArray!(x::A,y) where A<:AbstractArray =begin x.=y end
 updateArray!(x::A,y) where A<:AbstractArray{<:AbstractArray} =begin updateArray!.(x,y) end
@@ -40,6 +41,9 @@ end
 # Types and related functions
 Scalar{T}=Array{T,0}
 AbstractScalar{T}=AbstractArray{T,0}
+Base.:*(x::Scalar,y::Scalar)=x[]*y[]
+Base.:*(x::Number,y::Scalar)=x*y[]
+Base.:*(x::Scalar,y::Number)=x[]*y
 mutable struct
     Student{I<:Integer, R<:Real, VI<:AbstractVector,VR<:AbstractVector,SR<:AbstractScalar}
     isinfected::Bool
@@ -206,8 +210,12 @@ function Rmean(students)
 end
 function llpair(pair::StudentPair)
     first(.-pair.pairwiseβ.*exp.(.-pair.γ.*pair.pairwiselogN.-pair.δ.*pair.pairwiselogM)
-        .*(@view pair.cdfgtime[interval(pair.serialinterval,1,length(pair.cdfgtime))]).*pair.infectiousness.*pair.susceptibility
-  .* ifelse(pair.isinfected,(@view pair.pdfgtime[interval(pair.serialinterval,1,length(pair.cdfgtime))]),1) )
+        .*(@view pair.cdfgtime[interval(pair.serialinterval+1,1,length(pair.cdfgtime))]).*pair.infectiousness.*pair.susceptibility
+  .+ (pair.isinfected ? (
+        begin
+            prob=pair.pdfgtime[interval(pair.serialinterval+1,1,length(pair.cdfgtime))][]
+            log((1-exp(-prob)))#*(1-exp(pair.to.HHllkh[]))+exp(pair.to.HHllkh[]))
+        end) : 0) )
     ## sampling, hhfoi
 end
 function initialize!(students::Students, updateparameters=NamedTuple())
@@ -218,16 +226,16 @@ function initialize!(students::Students, updateparameters=NamedTuple())
     onsets.=getfield.(students.members,:onset)
     onsets[.!getfield.(students.members,:isinfected)].=nothing
     setfield!.(students.members,:isinfected,false)
-    setfield!.(students.members,:onset,typemax(Int))
+    setfield!.(students.members,:onset,typemax(Int16)|>Int)
     (x->x.infcovar[end]=0.0).(students.members) # remove winterbreak flag
     setfield!.(students.pairs,:isinfected,false)
-    setfield!.(students.pairs,:serialinterval,typemax(Int))
+    setfield!.(students.pairs,:serialinterval,typemax(Int16)|>Int)
     updatesusinf!.(students.members, Ref(students.parameters))
     onsets # returns the currently recorded onset dates
 end
 function initialcases!(students::Students, id, onset)
-    setfield!.(students.members[id],:onset,onset)
-    setfield!.(students.members[id],:isinfected,true)
+    @views setfield!.(students.members[id[1:min(length(id),length(onset))]],:onset,onset[1:min(length(id),length(onset))])
+    setfield!.(students.members[@view id[1:min(length(id),length(onset))]],:isinfected,true)
 end
 function communitytransmission!(students::Students)
     infected=rand.(fill(Bernoulli(1-exp(-first(students.parameters.rcom))),length(students.members)))
@@ -280,11 +288,11 @@ function posterior(chain, parameter::Symbol,iter)
     names=chain[:,parameter,1].names
     (names=names ,samples=mat)
 end
-function simulateoutbreaks!(students, parameters, times; initialize=true, warning=false, statuscheck! = (x...)->nothing)
+function simulateoutbreaks!(students, parameters, times; initialize=true, initcases=0, warning=false, statuscheck! = (x...)->nothing)
     if initialize
         onsets=SchoolOutbreak.initialize!.(students,Ref(parameters))
-        seedonsets=minimum.(onsets)
-        initialcases=findall.((x->!isnothing(x) && x==seedonset for seedonset in seedonsets),onsets)
+        seedonsets=getindex.(sort.(onsets),range.(1,min.(initcases,length.(onsets)),step=1))#minimum.(onsets)
+        initialcases=findall.((x->!isnothing(x) && x in seedonset for seedonset in seedonsets),onsets)
         SchoolOutbreak.initialcases!.(students,initialcases,seedonsets)
         SchoolOutbreak.communitytransmission!.(students)
     end
