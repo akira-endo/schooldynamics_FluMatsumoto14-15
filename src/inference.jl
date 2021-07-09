@@ -57,10 +57,10 @@ using JLD2
 @load "Matsumoto_studentsdata.jld2" students
 @time schooldata=SchoolOutbreak.StudentsData.([filter(x->x.stratum[1]==schoolid,students) for schoolid in 1:29],Ref(parameters),Ref((schoolclosure=duringbreak,)));
 
-# ## MLE (sensitivity analysis only)
+# ## MLE (for sensitivity analysis and model selection only)
 
 # +
-function ll(lparms,schooldata=schooldata)
+function nll(lparms,schooldata=schooldata)
     parms=copy(lparms)
     parms[1:8].=exp.(lparms[1:8])
     @views SchoolOutbreak.updateArray.(schooldata[1].parameters.β,[0;parms[1:4]])
@@ -71,7 +71,7 @@ function ll(lparms,schooldata=schooldata)
     @views SchoolOutbreak.updateArray(schooldata[1].parameters.infcoef,parms[end-(length(parms)-12)÷2:end])
     -SchoolOutbreak.llfunc!(schooldata)
 end
-@time @show ll(fill(-1.,20),schooldata)
+@time @show nll(fill(-1.,20),schooldata)
 
 # Baseline
 parmlen=11+length(sus_covlabels)+length(inf_covlabels)
@@ -80,8 +80,17 @@ parmlen=11+length(sus_covlabels)+length(inf_covlabels)
 #parmlen=12
 
 # MLE
-#@time opt=optimize(ll,fill(-20.0,parmlen),fill(0.0,parmlen),fill(-4.0,parmlen))
+#@time opt=optimize(nll,fill(-20.0,parmlen),fill(0.0,parmlen),fill(-4.0,parmlen))
 #exp.(opt.minimizer)
+# -
+
+# LAME
+#using Calculus
+#@time hess=Calculus.hessian(nll,opt.minimizer)
+#@show eigen(hess).values
+#logdetH=log(det(hess))
+#@show LAME = 2opt.minimum-length(opt.minimizer)*log(2pi)+logdetH
+
 # -
 
 # ## MCMC
