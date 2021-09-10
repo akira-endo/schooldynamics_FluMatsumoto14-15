@@ -190,7 +190,7 @@ include("SchoolOutbreak.jl")
 # +
 # Sensitivity analysis
 # estim: vector of parameter estimates for each sensitivity analysis
-medRnms=(reduce(hcat,R_nm(hh0,nclasses,1:40))' for nclasses in 1:6)
+medRnms=(reduce(hcat,R_nm(estim,nclasses,1:40))' for nclasses in 1:6)
 barsbyclass=groupedbar.(Ref(1:5),[reduce(vcat,medR.(Ref(medRnms),n,1:5)) for n in [20,30,40]], bar_position = :stack, bar_width=0.9, 
     ylim=(0,1),color=reverse([1 :skyblue 9],dims=2))
 xlabel!.(barsbyclass,"number of classes per grade")
