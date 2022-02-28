@@ -55,19 +55,20 @@ parameters=SchoolOutbreak.makeparameters(ones(5),ones(5)/2,ones(5)/2,0.01,
 # -
 
 using Mamba
-chain1 = read("Mastumoto_chain1.jls", ModelChains)
+chain1 = CSV.read("output/Matsumoto_MCMCsamples.csv",DataFrame)
 
 # preparation for simulation
-function parametersfromchain(chain, iter)
-    (β=SchoolOutbreak.posterior(chain,:βs,iter).samples[:,[1;1:4]]|>vec,
-    γ=SchoolOutbreak.posterior(chain,:γs,iter).samples[:,[1;1:3;3]]|>vec,
-    δ=SchoolOutbreak.posterior(chain,:δs,iter).samples[:,[1;1:3;3]]|>vec,
-    rcom=SchoolOutbreak.posterior(chain,:rcom,iter).samples|>first|>fill,
-    suscoef=SchoolOutbreak.posterior(chain,:suscoef,iter).samples|>vec,
-    infcoef=SchoolOutbreak.posterior(chain,:infcoef,iter).samples|>vec)
+function parametersfromchain(chain::DataFrame, iter)
+    chainmat=Matrix(chain)
+    (β=(chainmat[iter,[2;2:5]]|>vec) .|>exp,
+    γ=chainmat[iter,[6;6:8;8]]|>vec,
+    δ=chainmat[iter,[9;9:11;11]]|>vec,
+    rcom=((chainmat[iter,1])|>exp|>fill),
+    suscoef=chainmat[iter,12:15]|>vec,
+    infcoef=chainmat[iter,16:20]|>vec)
 end
 nsample=500
-@time updateparameters=parametersfromchain.(Ref(chain1),(1:nsample).*(length(chain1.range)÷(2*nsample)));
+@time updateparameters=parametersfromchain.(Ref(chain1),(1:nsample).*(size(chain1,1)÷nsample));
 (x->x.rcom.=0).(updateparameters)
 (x->x.members[1].isinfected=true).(simstudents)
 (x->x.members[1].onset=1).(simstudents)
@@ -91,10 +92,21 @@ end
 using RCall
 @rimport distr
 
-## COVID-19
+## COVID-19 (based on He et al.)
 incperiod=distr.Lnorm(1.434065,0.6612) # He et al.
 infprof=distr.Norm(0.53,sqrt(7)) # Aschroft et al.
 gtime=incperiod+infprof
+
+## COVID-19 (updated, based on Ferretti et al.)
+incperiod=distr.UnivarMixingDistribution(
+    distr.Lnorm(meanlog = 1.621, sdlog = 0.418),
+    distr.Lnorm(meanlog = 1.425, sdlog = 0.669),
+    distr.Lnorm(meanlog = 1.57, sdlog = 0.65),
+    distr.Lnorm(meanlog = 1.53, sdlog = 0.464),
+    distr.Lnorm(meanlog = 1.611, sdlog = 0.472),
+    distr.Lnorm(meanlog = 1.54, sdlog = 0.47),
+    distr.Lnorm(meanlog = 1.857, sdlog = 0.547)) # Ferretti et al.
+gtime=distr.Weibull(3.2862,6.1244) # Ferretti et al.
 
 ## Pandemic influenza
 #incperiod=distr.Lnorm(0.34,0.42) # Lessler et al. 2009 (https://dx.doi.org/10.1016%2FS1473-3099(09)70069-6)
@@ -107,15 +119,17 @@ gtimevec=gtimevec./sum(gtimevec)
 # set hazard function
 symratio=(0:0.25:1)'
 hazards_symsc=gtimevec.*(1 .- symratio.*(distr.p(incperiod)((1:20).-1)|>RCall.unsafe_vec))
-surv=(0:0.1:0.5)'
+surv=(0:0.05:0.25)'
 hazards_randsc=[hazard.*((1 .-surv).^(0:19)) for hazard in eachcol(hazards_symsc)]
+
+include("infprofile_Ferretti.jl")
 
 # enbed generation time distribution in parameters
 function setgtime!(parameters,newpdf)
     SchoolOutbreak.updateArray!(parameters.pdfgtime,[0;newpdf;0])
     SchoolOutbreak.updateArray!(parameters.cdfgtime,[0;0;cumsum(newpdf)])
 end
-setgtime!(parameters,hazards_randsc[3][:,2]); # 50% symptomatic + 10% testing rate
+setgtime!(parameters,hazards_randsc[3][:,3]); # 50% symptomatic + 10% testing rate
 # -
 
 # ## Outbreak simulation
@@ -145,13 +159,13 @@ function incidencebyclass_reorder!(members,idsvector,ngrades,nclasses, closureti
             updateorders!(gradeorder,classorder, members[ids])
             reorderedgcs=reorderedclass.(getgradeclass.(members[ids]),Ref(gradeorder),Ref(classorder))
             for gc in reorderedgcs
-                casesbyclass[CartesianIndex(gc)].+=1
+                casesbyclass[CartesianIndex(gc)]+=1
             end
             casesbyclass
         end)(members,ids)
     for ids in idsvector]
     if isnothing(closuretime) return(reorderedincidence) end # return reordered incidence only if closuretime is not passed
-    reorderedclosuretime=[zeros(Int,ngrades,nclasses) for t in 1:length(idsvector)]
+    reorderedclosuretime=[zeros(Int,ngrades,nclasses).+min.(0,getindex.(closuretime,t)) for t in 1:length(idsvector)]
     for (g,closure,corder) in zip(1:6,collect(eachrow(closuretime)),classorder)
         if g in gradeorder
             setindex!.(reorderedclosuretime, (getindex.(closure[corder],t) for t in 1:length(idsvector)), findfirst(x->x==g,gradeorder), Ref(corder))
@@ -167,12 +181,12 @@ end
 function outbreakscenarios!(simstudents,updateparameters,R0,gtime)
     R0set!.(updateparameters,Ref(R0))
     setgtime!(simstudents[1].parameters,gtime)
-    outbreaks=SchoolOutbreak.simulateoutbreaks!.(Ref(simstudents), updateparameters, Ref(1:360))
+    outbreaks=SchoolOutbreak.simulateoutbreaks!.(Ref(simstudents), updateparameters, Ref(1:360),initcases=1)
     R0set!.(updateparameters,Ref(1 ./R0)) # to fix the breaking change when R0 is a vector
     readoutbreakbyclass_reorder.(outbreaks,Ref(simstudents),6,Ref([2,4,2,1]))
 end
 
-gtimes=[hazards_symsc[:,1],hazards_symsc[:,3], hazards_randsc[3][:,2]]|>permutedims
+gtimes=[hazards_symsc[:,1],hazards_symsc[:,3], hazards_randsc[3][:,3]]|>permutedims
 @time scenarios=outbreakscenarios!.(Ref(simstudents),Ref(updateparameters),[1.8,1.2,0.8],gtimes);
 gtimes_dayoff=[hazards_symsc[:,1].*repeat(0:1,size(hazards_symsc,1))[1:size(hazards_symsc,1)],hazards_symsc[:,3].*repeat(0:1,size(hazards_symsc,1))[1:size(hazards_symsc,1)],hazards_symsc[:,3].*repeat([1,1,0],size(hazards_symsc,1))[1:size(hazards_symsc,1)]]|>permutedims
 @time scenarios_dayoff=outbreakscenarios!.(Ref(simstudents),Ref(updateparameters),[1.8,1.2,0.8],gtimes_dayoff);
@@ -227,6 +241,7 @@ function canceltransmission!(student,frompairs,strategy,currenttime)
     end
 end
 function (strategy::Strategy)(students,currenttime)
+    if currenttime==1 students.members[1].onset=rand(1:5) end
     infectorsid=findall(x->x.onset==currenttime,students.members)
     if length(infectorsid)==0 return(nothing) end # abort if no infected person  
     infectors=students.members[infectorsid]
@@ -236,13 +251,13 @@ function (strategy::Strategy)(students,currenttime)
     
     detectedsdict=detectbinom(countmap(getfield.(infectors,:stratum)),strategy.detectprob)
     for classdetected in detectedsdict
-        if last(classdetected)!=0 # if at least one case was detected
-            closurefrom=currenttime+minimum(rand(strategy.detectdist,last(classdetected)))
+        if last(classdetected)!=0 || strategy.closuretime[1][currenttime]==-1# if at least one case was detected
+            closurefrom=currenttime+minimum([0;rand(strategy.detectdist,last(classdetected))])
             closuretimes=strategy.closuretime[first(classdetected)[2:3]...]
             if closurefrom>length(closuretimes)||closuretimes[closurefrom]!=0 continue end # if already closed, no change
-            closuretimes[closurefrom+1:min(closurefrom+strategy.closurelength,length(closuretimes))].=reverse(1:min(strategy.closurelength,length(closuretimes)-closurefrom))
+            closuretimes[closurefrom+1:min(closurefrom+strategy.closurelength,length(closuretimes))].+=iszero.(closuretimes[closurefrom+1:min(closurefrom+strategy.closurelength,length(closuretimes))])#reverse(1:min(strategy.closurelength,length(closuretimes)-closurefrom))
             if closurefrom+strategy.closurelength<length(closuretimes) && closuretimes[closurefrom+strategy.closurelength+1]!=0
-                @views closuretimes[closurefrom+1:min(closurefrom+closuretimes[closurefrom+1],length(closuretimes))].=0
+                @views closuretimes[closurefrom+1:min(closurefrom+closuretimes[closurefrom+1],length(closuretimes))].=min.(0,closuretimes[closurefrom+1:min(closurefrom+closuretimes[closurefrom+1],length(closuretimes))]) # clear closuretime onward, but leave weekend as is
             end
         end
     end
@@ -251,7 +266,7 @@ end
 function outbreakscenarios!(simstudents,updateparameters,R0,gtime,strategy)
     R0set!.(updateparameters,Ref(R0))
     setgtime!(simstudents[1].parameters,gtime)
-    outbreaks=SchoolOutbreak.simulateoutbreaks!.(Ref(simstudents), updateparameters, Ref(1:360), statuscheck! = strategy)
+    outbreaks=SchoolOutbreak.simulateoutbreaks!.(Ref(simstudents), updateparameters, Ref(1:360), statuscheck! = strategy,initcases=1)
     R0set!.(updateparameters,Ref(1 ./R0)) # to fix the breaking change when R0 is a vector
     incidences=(x->getindex.(x,:incidence)).(outbreaks)
     closuretimes=(x->getindex.(x,:closuretime)).(outbreaks)
@@ -260,8 +275,10 @@ function outbreakscenarios!(simstudents,updateparameters,R0,gtime,strategy)
 end
 
 # +
-gtimes=[hazards_symsc[:,1]] 
-ipdist=LogNormal(1.434065,0.6612) #COVID-19
+# Weekend effect
+gtimes=[hazards_symsc[:,1],hazards_symsc[:,3], hazards_randsc[3][:,3]]|>permutedims
+lnormpars=[(1.621, 0.418), (1.425, 0.669), (1.57, 0.65), (1.53, 0.464),(1.611, 0.472), (1.54, 0.47), (1.857, 0.547)] # Pooling as in Ferretti et al.
+ipdist=MixtureModel(LogNormal,lnormpars) #COVID-19
 #ipdist=LogNormal(0.34,0.42) #Flu
 
 function detectdistribution(ipdist, testingrate, symptomaticratio, trange=0:19)
@@ -270,39 +287,21 @@ function detectdistribution(ipdist, testingrate, symptomaticratio, trange=0:19)
     (dist=Categorical(normalize(probmass,1)), prob=sum(probmass))
 end
 detect=(x->[first.(x),last.(x)])(detectdistribution.(ipdist, [0,0.1], 0.5)) # replace 0.5 with 0.25 for lower symptomatic ratio
-strategies=[Strategy.(detect[1],detect[2], 14, Ref([zeros(Int,360) for i in 1:6, j in 1:classsize])) for classsize in (2,4,2,1)] # replace 14 with 7 for flu
-@time scenarios_strategies_notest=outbreakscenarios!.(Ref(simstudents),Ref(updateparameters),[1.8,1.2,0.8].*[1 classisolation],gtimes,Ref(first.(strategies)));
-@time scenarios_strategies_10test=outbreakscenarios!.(Ref(simstudents),Ref(updateparameters),[1.8,1.2,0.8].*[1 classisolation],gtimes,Ref(last.(strategies)));
+strategies=[Strategy.(detect[1],0., 0, Ref([begin v=zeros(Int,360);v[[6:7:360;7:7:360]].=-1;v end for i in 1:6, j in 1:classsize])) for classsize in (2,4,2,1)] 
+@time scenarios_strategies_notest=outbreakscenarios!.(Ref(simstudents),Ref(updateparameters),[2,1.5,0.8],gtimes,Ref(first.(strategies)));
+strategies_dayoff=[Strategy.(detect[1],0., 0, Ref([begin v=zeros(Int,360);v[[2:7:360;4:7:360;6:7:360;7:7:360]].=-1;v end for i in 1:6, j in 1:classsize])) for classsize in (2,4,2,1)]
+@time scenarios_strategies_dayoff1=outbreakscenarios!.(Ref(simstudents),Ref(updateparameters),[2,1.5,0.8],gtimes,Ref(first.(strategies_dayoff)));
+strategies_dayoff=[Strategy.(detect[1],0., 0, Ref([begin v=zeros(Int,360);v[[3:7:360;6:7:360;7:7:360]].=-1;v end for i in 1:6, j in 1:classsize])) for classsize in (2,4,2,1)]
+@time scenarios_strategies_dayoff2=outbreakscenarios!.(Ref(simstudents),Ref(updateparameters),[2,1.5,0.8],gtimes,Ref(first.(strategies_dayoff)));
+classisolation=[[fill(0.5,3);1;1], [fill(0.5,3);1.2;1.2], [fill(0.1,3);1;1], [fill(0.1,3);1.4;1.4]]|>permutedims
+@time scenarios_classisolation=outbreakscenarios!.(Ref(simstudents),Ref(updateparameters),[2,1.5,0.8].*classisolation,Ref(gtimes[1]),Ref(first.(strategies)));
+
 # -
 
 using JLD2
-#@save "closurestrategy_covid.jld2" scenarios_strategies_notest scenarios_strategies_10test
-
-# ## Simulation results
-# ### No regular testing
-
-outbreakmaps=[(x->reduce(hcat,vec.(x'))).(mean(scenario))./[40,20,20,40] for scenario in first.(scenarios_strategies_notest)]
-heatmaps=Plots.heatmap.(reduce(vcat,vec(outbreakmaps)),clim=((0,0.2/40)),color=cgrad([:white,:red,:purple,:indigo,:black]),legend=false)
-yticks!.(heatmaps,repeat(Ref((1:6) .-0.5).*[2,4,2,1].+0.5,15),Ref(string.(1:6).*""),tickfontsize=6)
-Plots.plot!.(heatmaps,repeat(Ref(1:5).*[2,4,2,1].+0.5,15),linetype=:hline,color=:black,linealpha=0.2)
-Plots.plot(heatmaps...,layout=(15,4),size=(800,2000),left_margin=2mm,bottom_margin=-2mm, xlabel="time",ylabel="classes/grades",guidefontsize=6,tickfontsize=6)
-
-closuremaps=[(x->reduce(hcat,vec.(x'))).(mean(scenario)) for scenario in last.(scenarios_strategies_notest)]
-heatmaps=Plots.heatmap.(reduce(vcat,vec(closuremaps)),clim=((0,0.2)),color=cgrad([:white,:skyblue,:blue,:indigo,:black]),legend=false)
-yticks!.(heatmaps,repeat(Ref((1:6) .-0.5).*[2,4,2,1].+0.5,15),Ref(string.(1:6).*""),tickfontsize=6)
-Plots.plot!.(heatmaps,repeat(Ref(1:5).*[2,4,2,1].+0.5,15),linetype=:hline,color=:black,linealpha=0.2)
-Plots.plot(heatmaps...,layout=(15,4),size=(800,2000),left_margin=2mm,bottom_margin=-2mm, xlabel="time",ylabel="classes/grades",guidefontsize=6,tickfontsize=6)
-
-# ### With 10% regular testing
-
-outbreakmaps=[(x->reduce(hcat,vec.(x'))).(mean(scenario))./[40,20,20,40] for scenario in first.(scenarios_strategies_10test)]
-heatmaps=Plots.heatmap.(reduce(vcat,vec(outbreakmaps)),clim=((0,0.2/40)),color=cgrad([:white,:red,:purple,:indigo,:black]),legend=false)
-yticks!.(heatmaps,repeat(Ref((1:6) .-0.5).*[2,4,2,1].+0.5,15),Ref(string.(1:6).*""),tickfontsize=6)
-Plots.plot!.(heatmaps,repeat(Ref(1:5).*[2,4,2,1].+0.5,15),linetype=:hline,color=:black,linealpha=0.2)
-Plots.plot(heatmaps...,layout=(15,4),size=(800,2000),left_margin=2mm,bottom_margin=-2mm, xlabel="time",ylabel="classes/grades",guidefontsize=6,tickfontsize=6)
-
-closuremaps=[(x->reduce(hcat,vec.(x'))).(mean(scenario)) for scenario in last.(scenarios_strategies_10test)]
-heatmaps=Plots.heatmap.(reduce(vcat,vec(closuremaps)),clim=((0,0.2)),color=cgrad([:white,:skyblue,:blue,:indigo,:black]),legend=false)
-yticks!.(heatmaps,repeat(Ref((1:6) .-0.5).*[2,4,2,1].+0.5,15),Ref(string.(1:6).*""),tickfontsize=6)
-Plots.plot!.(heatmaps,repeat(Ref(1:5).*[2,4,2,1].+0.5,15),linetype=:hline,color=:black,linealpha=0.2)
-Plots.plot(heatmaps...,layout=(15,4),size=(800,2000),left_margin=2mm,bottom_margin=-2mm, xlabel="time",ylabel="classes/grades",guidefontsize=6,tickfontsize=6)
+@save "simulation_weekend_covid.jld2" scenarios_strategies_notest scenarios_strategies_dayoff1 scenarios_strategies_dayoff2 scenarios_classisolation
+                                                    
+strategies=[Strategy.(detect[1],detect[2], 5, Ref([begin v=zeros(Int,360);v[[6:7:360;7:7:360]].=-1;v end for i in 1:6, j in 1:classsize])) for classsize in (2,4,2,1)] # replace 14 with 7 for flu
+@time scenarios_strategies_notest=outbreakscenarios!.(Ref(simstudents),Ref(updateparameters),[2,1.5,0.8].*[1 classisolation],gtimes,Ref(first.(strategies)));
+@time scenarios_strategies_10test=outbreakscenarios!.(Ref(simstudents),Ref(updateparameters),[2,1.5,0.8].*[1 classisolation],gtimes,Ref(last.(strategies)));
+@save "closurestrategy_covid.jld2" scenarios_strategies_notest scenarios_strategies_10test
