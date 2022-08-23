@@ -1,5 +1,5 @@
 # Within and between classroom transmission patterns of seasonal influenza and pandemic management strategies at schools
-Source code accompanying Endo et al. "Within and between classroom transmission patterns of seasonal influenza and pandemic management strategies at schools".
+Source codes accompanying [Endo et al. "Within and between classroom transmission patterns of seasonal influenza among primary school students in Matsumoto city, Japan"](https://www.pnas.org/doi/10.1073/pnas.2112605118) and Endo et al. "Simulating respiratory disease transmission within and between classrooms to assess pandemic management strategies at schools" (in press).
 
 ## Main files
 * src/inference.jl:
