@@ -16,6 +16,8 @@ Model validation by simulated of household-school outbreaks
 Function definitions for household likelihood
 * src/SchoolOutbreak.jl
 Function and structure definitions for inference and simulation
+* src/schooloutbreaks_Texas.jl
+Comparison between empirical (Texas, US) and simulated school outbreak sizes
 * data/anonymizedstudents.jld2
 JLD2 data file containing anonymized data
 * output/Matsumoto_MCMCsamples.csv
