@@ -332,3 +332,20 @@ for n in 1:4
 plot(closureeffects(obsizes[n],obsizes_closure[n],closuresizes[n])[4:6]...,layout=(3,1), legend=[:none :none (0.5,1)],ylim=[(0,100) (0,100) (0,100)],size=(300,900),#title=["Rs = ".*string.([1.8 1.2 0.8]) fill("",1,3)],titlefont=10,
 ylabel=repeat(["total days of class closure"],inner=(1,3)),left_margin=10mm,tickfontsize=10) |>display
 end
+                                                        
+# final sizes
+obsizes_full=[[obsizes_baseline[n][:,1:3] obsizes_classisolation[n][:,1:4]] for n in 1:4]
+obsizebars=closureeffects([reduce(hcat,getindex.(obsizes_full,:,1)) obsizes_full[1][:,2:end]],fill([0],3,10),fill([0],3,10),schoolsize=[[480,480,240,240];fill(480,6)]',
+barcolors=[fill(2,4);fill(13,2);fill(16,4)],barpalette=[:auto],xlabels=["baseline","split\nclasses", "staggered\n(within)","staggered\n(between)","50%\nsymptom\nscreening","10%\nregular\ntests","class\ncohorting\n50%/100%", "class\ncohorting\n50%/120%","class\ncohorting\n10%/100%", "class\ncohorting\n10%/140%"])
+plot(obsizebars[1:3]...,layout=(3,1), legend=[:none :none :none],ylim=[(0,1) (0,1) (0,0.1) (0,50) (0,50) (0,50)],size=(1000,700),bottom_margin=3mm,
+ylabel=repeat(["proportion infected" "total days of class closure"],inner=(1,3)),left_margin=10mm,tickfontsize=10) |>display
+
+# peak week sizes
+sumbyweek(vecofmats)=[0;cumsum(sum.(vecofmats))[7:7:end]]|>diff|>maximum # takes the maximum week sum
+peaksizes_baseline=[[Nth(n).(scenario).|>sumbyweek for scenario in scenarios] for n in 1:4]
+peaksizes_classisolation=[[Nth(n).(scenario).|>sumbyweek for scenario in scenarios_CI] for n in 1:4]
+peaksizes_full=[[peaksizes_baseline[n][:,1:3] peaksizes_classisolation[n][:,1:4]] for n in 1:4]
+peaksizebars=closureeffects([reduce(hcat,getindex.(peaksizes_full,:,1)) peaksizes_full[1][:,2:end]],fill([0],3,10),fill([0],3,10),schoolsize=[[480,480,240,240];fill(480,6)]',
+barcolors=[fill(2,4);fill(13,2);fill(16,4)],barpalette=[:auto],xlabels=["baseline","split\nclasses", "staggered\n(within)","staggered\n(between)","50%\nsymptom\nscreening","10%\nregular\ntests","class\ncohorting\n50%/100%", "class\ncohorting\n50%/120%","class\ncohorting\n10%/100%", "class\ncohorting\n10%/140%"])
+plot(peaksizebars[1:3]...,layout=(3,1), legend=[:none :none :none],ylim=[(0,0.35) (0,0.25) (0,0.05) (0,50) (0,50) (0,50)],size=(1000,700),bottom_margin=3mm,
+ylabel=repeat(["peak weekly attack rate" "total days of class closure"],inner=(1,3)),left_margin=10mm,tickfontsize=10) |>display
